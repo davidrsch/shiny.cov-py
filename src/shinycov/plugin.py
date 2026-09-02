@@ -240,24 +240,19 @@ def _extend_report_filters(cov: coverage.Coverage, ui_file: str) -> None:
         cov.config.report_include = list(cov.config.report_include) + [ui_file]
 
 
-def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    global _owns_coverage
-    cov = coverage.Coverage.current()
-    if cov is None:
-        # Neither this plugin nor a `coverage run` wrapper started
-        # measurement -- nothing to blend UI coverage into.
-        return
+def finalize(
+    cov: coverage.Coverage,
+    manifest: dict[str, Any] | None,
+    interactions: list[dict[str, Any]],
+    out_dir: pathlib.Path,
+) -> float | None:
+    """Blend UI coverage into `cov` and report it.
 
-    if _owns_coverage:
-        cov.stop()
-        cov.save()
-        _owns_coverage = False
-
-    _combine_with_retry(cov)
-
-    out_dir = _output_dir(session.config)
-    manifest = controllers.get_manifest()
-    interactions = controllers.get_interactions()
+    Shared by the pytest plugin's `pytest_sessionfinish` hook and the
+    standalone `shinycov` collector (used for Cypress-driven runs, where no
+    pytest session exists). Returns the blended coverage percentage, or None
+    if the report itself failed.
+    """
     hit_ids = _hit_ids(interactions)
 
     ui_file = out_dir / UI_ELEMENTS_FILENAME
@@ -297,7 +292,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         percent = cov.report()
     except coverage.misc.CoverageException as e:
         print(f"shiny.cov: coverage report failed: {e}")
-        return
+        return None
 
     # Also emit an HTML report with per-line hit counts (coverage.py's
     # equivalent of covr::report()'s annotated source view), written under
@@ -309,21 +304,44 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         print(f"shiny.cov: html report failed: {e}")
 
     if manifest is None:
-        # No controller method was ever called on a real page, so UI
-        # discovery never ran at all -- distinct from an app that was
-        # tested but genuinely has zero UI elements, which would leave
-        # `manifest` as a real (if empty) dict instead of None. Both would
-        # otherwise print an identical "0/0" line with nothing to tell them
-        # apart.
+        # No UI interaction was ever logged, so UI discovery never ran --
+        # distinct from an app that was tested but genuinely has zero UI
+        # elements, which would leave `manifest` as a real (if empty) dict
+        # instead of None. Both would otherwise print an identical "0/0"
+        # line with nothing to tell them apart.
         print(
-            "shiny.cov: no UI manifest discovered -- no shiny.playwright.controller "
-            "method was called on a page this session, so UI coverage wasn't "
-            "tracked. If your tests interact with the app via raw Playwright "
-            "locators instead of the controller classes, this is expected; "
-            "otherwise check that your tests actually exercise the app."
+            "shiny.cov: no UI manifest discovered -- no controller/command "
+            "logged a UI interaction, so UI coverage wasn't tracked. If your "
+            "tests interact with the app via raw locators instead of the "
+            "controller classes, this is expected; otherwise check that your "
+            "tests actually exercise the app."
         )
 
     print(
         f"shiny.cov: blended coverage {percent:.1f}% "
         f"({len(hit_ids)}/{len(element_ids)} UI elements interacted with)"
+    )
+    return percent
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    global _owns_coverage
+    cov = coverage.Coverage.current()
+    if cov is None:
+        # Neither this plugin nor a `coverage run` wrapper started
+        # measurement -- nothing to blend UI coverage into.
+        return
+
+    if _owns_coverage:
+        cov.stop()
+        cov.save()
+        _owns_coverage = False
+
+    _combine_with_retry(cov)
+
+    finalize(
+        cov,
+        controllers.get_manifest(),
+        controllers.get_interactions(),
+        _output_dir(session.config),
     )

@@ -70,6 +70,9 @@ Repository = "https://github.com/davidrsch/shiny.cov-py"
 [project.entry-points.pytest11]
 shinycov = "shinycov.plugin"
 
+[project.scripts]
+shinycov = "shinycov.collect:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/shinycov"]
 
