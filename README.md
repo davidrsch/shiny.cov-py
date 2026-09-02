@@ -137,6 +137,19 @@ browser-side UI discovery is identical (py-shiny ships the same
    # or: python -m shinycov.collect .
    ```
 
+   Both the pytest plugin and the standalone `shinycov` command can also
+   emit a UI-blended Cobertura XML report (the Python counterpart to
+   `shiny.cov::to_cobertura()` in the R package), with one `<line>` per
+   executable source line:
+
+   ```bash
+   shinycov . --cobertura cobertura.xml
+   ```
+
+   Or programmatically: `shinycov.to_cobertura(".", "cobertura.xml")`.
+   Cobertura `hits` are 0 or 1 rather than execution counts: coverage.py
+   records whether a line executed, not how many times.
+
 ## pytest-xdist is not supported
 
 `shiny.cov` tracks manifest/interaction state in plain module-level
@@ -148,6 +161,36 @@ interactions, silently understating the blended percentage. The plugin
 prints a warning at `pytest_configure` time when it detects `-n` is in use,
 but does not attempt to merge across workers -- run without `-n` for an
 accurate blended coverage number.
+
+## R parity
+
+The R and Python packages share a UI-manifest and interaction-log model
+(the vendored `discover-bindings.js` is byte-identical, and the
+manifest-merge algorithm is ported with tests against the same fixture).
+Two areas are solved differently on purpose, not missing:
+
+- **UI-element source attribution.** The R package locates each element's
+  own source line and merges synthetic entries into a covr object; the
+  Python package instead writes one statement per element to a generated
+  `.shiny.cov/ui_elements.py` and marks interacted elements covered via
+  `CoverageData.add_lines()`. The outcome -- one blended percentage that
+  treats an untouched UI element as uncovered -- is identical; the
+  mechanism differs because coverage.py has no covr-style
+  reduce-by-minimum.
+- **Dynamic-id source locating.** R needs an `htmltools::tag()` hook to map
+  a computed id back to a source line; Python logs interactions by the
+  controller's own `.id`, which is exact and needs no source lookup.
+
+Two areas are currently not ported, both by coverage.py's design:
+
+- **Per-source counts.** R tags each test framework's coverage
+  (`SHINYCOV_SOURCE`) and reports per-source columns
+  (`source_counts()`/`source_coverage()`). coverage.py merges parallel data
+  files at combine-time and does not retain per-source line attribution, so
+  the Python package reports one combined number.
+- **Module-boundary grouping.** R's `shiny::moduleServer()` hook populates
+  the manifest's `modules` field for the UI report; py-shiny has no
+  equivalent hook, so that field stays empty (cosmetic grouping only).
 
 ## Why UI coverage needs its own generated file
 

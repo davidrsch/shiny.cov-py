@@ -240,18 +240,17 @@ def _extend_report_filters(cov: coverage.Coverage, ui_file: str) -> None:
         cov.config.report_include = list(cov.config.report_include) + [ui_file]
 
 
-def finalize(
+def _blend_ui_coverage(
     cov: coverage.Coverage,
     manifest: dict[str, Any] | None,
     interactions: list[dict[str, Any]],
     out_dir: pathlib.Path,
-) -> float | None:
-    """Blend UI coverage into `cov` and report it.
+) -> tuple[list[str], set[str], pathlib.Path]:
+    """Merge UI element coverage into `cov`; return (element_ids, hit_ids, ui_file).
 
-    Shared by the pytest plugin's `pytest_sessionfinish` hook and the
-    standalone `shinycov` collector (used for Cypress-driven runs, where no
-    pytest session exists). Returns the blended coverage percentage, or None
-    if the report itself failed.
+    The returned tuple is what `finalize()` and `to_cobertura()` both need:
+    which elements exist (in generated-file order), which were interacted
+    with, and the generated file those synthetic lines live in.
     """
     hit_ids = _hit_ids(interactions)
 
@@ -287,6 +286,24 @@ def finalize(
             # silently absent from the report.
             cov.get_data().touch_file(str(ui_file))
         _extend_report_filters(cov, str(ui_file))
+
+    return element_ids, hit_ids, ui_file
+
+
+def finalize(
+    cov: coverage.Coverage,
+    manifest: dict[str, Any] | None,
+    interactions: list[dict[str, Any]],
+    out_dir: pathlib.Path,
+) -> float | None:
+    """Blend UI coverage into `cov` and report it.
+
+    Shared by the pytest plugin's `pytest_sessionfinish` hook and the
+    standalone `shinycov` collector (used for Cypress-driven runs, where no
+    pytest session exists). Returns the blended coverage percentage, or None
+    if the report itself failed.
+    """
+    element_ids, hit_ids, _ = _blend_ui_coverage(cov, manifest, interactions, out_dir)
 
     try:
         percent = cov.report()
