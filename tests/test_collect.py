@@ -126,7 +126,9 @@ def test_source_coverage_is_per_line_per_source(tmp_path: pathlib.Path):
     assert data[cypress_file][2] == {"cypress": 1}
 
 
-def test_render_report_html_decorates_coverage_html(tmp_path: pathlib.Path, monkeypatch):
+def test_render_report_html_has_counts_sources_and_toggle(
+    tmp_path: pathlib.Path, monkeypatch
+):
     monkeypatch.chdir(tmp_path)
     _write_source_data(tmp_path, "pytest", "app.py")
     # Simulate the subprocess hook's line-hit output: two executions of the
@@ -138,19 +140,15 @@ def test_render_report_html_decorates_coverage_html(tmp_path: pathlib.Path, monk
     )
 
     index = render_report_html(tmp_path)
-    assert index.endswith("index.html")
+    assert index.endswith("report.html")
+    html = pathlib.Path(index).read_text(encoding="utf-8")
 
-    htmlcov = tmp_path / ".shiny.cov" / "htmlcov"
-    assert (htmlcov / "index.html").exists()
-    # Every per-file page (not the index) carries the injected count + source
-    # column; pick any one and check the injected spans.
-    per_file = None
-    for page in htmlcov.glob("*.html"):
-        text = page.read_text(encoding="utf-8")
-        if 'id="source"' in text:  # a per-file source page, not an index
-            per_file = text
-            break
-    assert per_file is not None
-    assert "scov-legend" in per_file and "count" in per_file
-    assert '<span class="scov-src" title="pytest">' in per_file
-    assert '<span class="scov" title="total hits">' in per_file
+    assert "<th>count</th>" in html
+    assert "<th class='src-col'>pytest</th>" in html
+    assert "shinycov-toggle-sources" in html  # the source-column toggle
+    assert "class='count'>2</td>" in html  # the return line executed twice
+    assert "class='src-col'>2</td>" in html
+    # The generated ui_elements.py file is not listed as a source file.
+    assert "ui_elements.py" not in html
+    # Hit lines are colored covered, not missed.
+    assert "<tr class='covered'>" in html
