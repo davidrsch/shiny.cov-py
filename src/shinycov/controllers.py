@@ -102,15 +102,15 @@ def _record_interaction(instance: Any, action: str, args: tuple[Any, ...],
 
 
 def _record_manifest_snapshot(instance: Any) -> None:
-    # Best-effort: a real interaction re-discovers the live UI manifest
-    # from the same page the interaction just happened on, and merges it
-    # into the running manifest via the same order-independent merge
-    # `merge_manifest_snapshots()` uses on the R side -- this is exactly
-    # the scenario that merge function is designed for (a widget's DOM can
-    # look different after interaction than it did at load time). A page
-    # that isn't a real, live Playwright page (e.g. a mock in unit tests,
-    # or a page that's already closed) must never break the test itself,
-    # so any failure here is swallowed.
+    # A real interaction re-discovers the live UI manifest from the same
+    # page the interaction happened on, and merges it into the running
+    # manifest via the same order-independent merge
+    # `merge_manifest_snapshots()` uses on the R side -- the scenario that
+    # merge function is designed for (a widget's DOM can look different
+    # after interaction than it did at load time). A page that isn't a
+    # real, live Playwright page (e.g. a mock in unit tests, or a page
+    # that's already closed) must never break the test itself, so any
+    # failure here is swallowed.
     global _manifest
     page = getattr(instance, "page", None)
     if page is None:
