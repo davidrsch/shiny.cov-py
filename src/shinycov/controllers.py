@@ -43,6 +43,7 @@ docstring flags its `Protocol`-based mixin design as deliberate:
 """
 from __future__ import annotations
 
+import contextlib
 import inspect
 import time
 from typing import Any, Callable
@@ -56,6 +57,7 @@ _WRAPPED_MARKER = "_shinycov_wrapped"
 
 _interactions: list[dict[str, Any]] = []
 _manifest: dict[str, Any] | None = None
+_modules: set[str] = set()
 
 
 def _all_controller_classes() -> set[type]:
@@ -119,9 +121,69 @@ def _record_manifest_snapshot(instance: Any) -> None:
         snapshot = discover_manifest(page)
         if not isinstance(snapshot, dict):
             return
+        _attach_modules(snapshot)
         _manifest = merge.merge_manifest_snapshots(_manifest, snapshot)
     except Exception:
         return
+
+
+def _instrument_modules() -> None:
+    """Record py-shiny module namespaces as ground-truth boundaries.
+
+    py-shiny's module system is the counterpart to R's `shiny::moduleServer()`:
+    `shiny.module.ui()` enters `namespace_context(id)`, which resolves to the
+    full nested prefix (e.g. "app", then "app-inner"). Record every prefix
+    entered at runtime so the discovered manifest's `modules` field reflects
+    real module boundaries instead of guessing from "-"-joined DOM ids.
+    """
+    global _modules
+    try:
+        import shiny.module as shiny_module
+        from shiny._namespaces import current_namespace
+    except ImportError:
+        return
+
+    if getattr(shiny_module.namespace_context, _WRAPPED_MARKER, False):
+        return
+
+    original = shiny_module.namespace_context
+
+    @contextlib.contextmanager
+    def wrapped(module_id):
+        with original(module_id):
+            namespace = current_namespace()
+            if namespace:
+                _modules.add(str(namespace))
+            yield
+
+    setattr(wrapped, _WRAPPED_MARKER, True)
+    shiny_module.namespace_context = wrapped
+
+
+def _attach_modules(snapshot: dict[str, Any]) -> None:
+    """Populate a snapshot's `modules` and each element's `module` field.
+
+    Longest-prefix match against the recorded boundaries, the same
+    attribution R's `apply_module_boundaries()` performs. R's
+    corroboration check (a lone id that merely shares a real module's
+    prefix) is deliberately not ported: it only affects cosmetic grouping
+    in a rare top-level-id-coincidence case.
+    """
+    if not _modules:
+        return
+    boundaries = sorted(_modules, key=len, reverse=True)
+
+    def owning(element_id: str) -> str:
+        for boundary in boundaries:
+            if element_id == boundary or element_id.startswith(boundary + "-"):
+                return boundary
+        return ""
+
+    snapshot["modules"] = sorted(_modules)
+    for element in snapshot.get("inputs", []):
+        element["module"] = owning(element.get("id") or "")
+    for element in snapshot.get("outputs", []):
+        element["module"] = owning(element.get("id") or "")
 
 
 def _make_wrapper(name: str, orig: Callable[..., Any]) -> Callable[..., Any]:
@@ -154,6 +216,7 @@ def instrument() -> int:
 
     Returns the number of methods newly wrapped by this call.
     """
+    _instrument_modules()
     wrapped_count = 0
     for klass in _all_controller_classes():
         for attr_name, attr_val in list(vars(klass).items()):
@@ -178,8 +241,13 @@ def get_manifest() -> dict[str, Any] | None:
     return _manifest
 
 
+def get_modules() -> list[str]:
+    return sorted(_modules)
+
+
 def reset() -> None:
-    """Clear recorded interactions/manifest. Test isolation only."""
+    """Clear recorded interactions/manifest/modules. Test isolation only."""
     global _manifest
     _interactions.clear()
     _manifest = None
+    _modules.clear()
