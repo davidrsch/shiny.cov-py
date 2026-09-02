@@ -66,6 +66,17 @@ def test_install_writes_hook_and_sets_env(tmp_path: pathlib.Path):
             os.environ["SHINYCOV_OUTPUT_DIR"] = old_out
 
 
+def test_read_line_hits_parses_per_source_counts(tmp_path: pathlib.Path):
+    out = tmp_path / ".shiny.cov"
+    out.mkdir()
+    (out / "linehits.pytest.json").write_text(
+        json.dumps({"/x/app.py:1": 3, "/x/app.py:2": 5})
+    )
+    assert modules.read_line_hits(out) == {
+        "pytest": {("/x/app.py", 1): 3, ("/x/app.py", 2): 5}
+    }
+
+
 def test_read_boundaries_handles_missing_and_corrupt(tmp_path: pathlib.Path):
     out = tmp_path / ".shiny.cov"
     assert modules.read_boundaries(out) == []

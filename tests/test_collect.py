@@ -128,12 +128,19 @@ def test_source_coverage_is_per_line_per_source(tmp_path: pathlib.Path):
 
 def test_render_report_html_has_count_and_source_columns(tmp_path: pathlib.Path):
     _write_source_data(tmp_path, "pytest", "app.py")
+    # Simulate the subprocess hook's line-hit output: two executions of the
+    # return line (line 2) and one of the def line (line 1).
+    app = str(tmp_path / "app.py")
+    (tmp_path / ".shiny.cov").mkdir()
+    (tmp_path / ".shiny.cov" / "linehits.pytest.json").write_text(
+        json.dumps({f"{app}:1": 1, f"{app}:2": 2})
+    )
     out = tmp_path / "coverage-report.html"
     render_report_html(tmp_path, str(out))
 
     html = out.read_text(encoding="utf-8")
     assert "<th>count</th>" in html
     assert "<th>pytest</th>" in html
-    assert "class='count'>1</td>" in html
-    assert "<td class='src-col'>1</td>" in html
+    assert "class='count'>2</td>" in html  # the return line executed twice
+    assert "<td class='src-col'>2</td>" in html
     assert "app.py</td>" in html

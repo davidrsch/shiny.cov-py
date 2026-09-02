@@ -275,7 +275,9 @@ def render_report_html(
     """
     root = pathlib.Path(root).resolve()
     cov_data = source_coverage(root)
-    sources = sorted({s for lines in cov_data.values() for line in lines.values() for s in line})
+    line_hits = modules.read_line_hits(root / OUTPUT_DIRNAME)
+    cov_sources = {s for lines in cov_data.values() for line in lines.values() for s in line}
+    sources = sorted(set(cov_sources) | set(line_hits))
 
     def _app_file(filename: str) -> bool:
         try:
@@ -330,12 +332,17 @@ def render_report_html(
             header += f"<th>{_esc(s)}</th>"
         header += "<th>source</th></tr>"
         body_parts.append(f"<table class='src'><thead>{header}</thead><tbody>")
-        for ln, source_hits in sorted(lines.items()):
-            total = sum(source_hits.values())
+        for ln in sorted(lines):
+            # Execution counts from the subprocess hook, falling back to 0
+            # for a line that never executed (coverage.py's boolean data only
+            # tells us a line is executable, not how many times it ran).
+            counts = {s: line_hits.get(s, {}).get((f, ln), 0) for s in sources}
+            total = sum(counts.values())
             cls = "missed" if total == 0 else "covered"
             cells = f"<td class='num'>{ln}</td><td class='count'>{total}</td>"
             for s in sources:
-                cells += f"<td class='src-col'>{source_hits.get(s, '')}</td>"
+                c = counts[s]
+                cells += f"<td class='src-col'>{c if c else ''}</td>"
             text = src[ln - 1] if 0 < ln <= len(src) else ""
             body_parts.append(
                 f"<tr class='{cls}'>{cells}<td><pre>{_esc(text)}</pre></td></tr>"
