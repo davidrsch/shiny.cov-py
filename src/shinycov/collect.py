@@ -54,6 +54,7 @@ def collect(root: str | pathlib.Path = ".") -> float | None:
     """Combine `.coverage.*` data with the Cypress UI log and report it."""
     root = pathlib.Path(root)
     out_dir = root / OUTPUT_DIRNAME
+    out_dir.mkdir(parents=True, exist_ok=True)
     cov = coverage.Coverage()
     _combine_with_retry(cov)
     manifest = _read_manifest(out_dir)
@@ -88,6 +89,7 @@ def to_cobertura(
     """
     root = pathlib.Path(root)
     out_dir = root / OUTPUT_DIRNAME
+    out_dir.mkdir(parents=True, exist_ok=True)
     cov = coverage.Coverage()
     _combine_with_retry(cov)
     manifest = _read_manifest(out_dir)
