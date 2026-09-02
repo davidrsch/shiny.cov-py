@@ -40,7 +40,7 @@ from typing import Any
 import coverage
 import pytest
 
-from . import controllers
+from . import controllers, modules
 
 OUTPUT_DIRNAME = ".shiny.cov"
 UI_ELEMENTS_FILENAME = "ui_elements.py"
@@ -108,6 +108,7 @@ def pytest_configure(config: pytest.Config) -> None:
     controllers.instrument()
     _warn_if_xdist_active(config)
     _tag_coverage_source()
+    modules.install(_output_dir(config))
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:
@@ -206,7 +207,10 @@ def _write_ui_elements_file(
         el_id = el["id"]
         name = _safe_identifier(el_id, used_names)
         tested = el_id in hit_ids
-        lines.append(f"{name} = {tested!r}  # id={el_id!r} type={el.get('type', '')!r}\n")
+        lines.append(
+            f"{name} = {tested!r}  "
+            f"# id={el_id!r} type={el.get('type', '')!r} module={el.get('module', '')!r}\n"
+        )
         ids_in_order.append(el_id)
 
     path.write_text("".join(lines), encoding="utf-8")
@@ -337,6 +341,10 @@ def finalize(
     pytest session exists). Returns the blended coverage percentage, or None
     if the report itself failed.
     """
+    boundaries = modules.read_boundaries(out_dir)
+    if manifest is not None and boundaries:
+        manifest = modules.attach_boundaries(manifest, boundaries)
+
     element_ids, hit_ids, _ = _blend_ui_coverage(cov, manifest, interactions, out_dir)
 
     try:
