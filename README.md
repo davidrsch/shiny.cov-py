@@ -181,16 +181,23 @@ Two areas are solved differently on purpose, not missing:
   a computed id back to a source line; Python logs interactions by the
   controller's own `.id`, which is exact and needs no source lookup.
 
-Two areas are currently not ported, both by coverage.py's design:
+Two areas are ported with coverage.py-appropriate semantics:
 
-- **Per-source counts.** R tags each test framework's coverage
-  (`SHINYCOV_SOURCE`) and reports per-source columns
-  (`source_counts()`/`source_coverage()`). coverage.py merges parallel data
-  files at combine-time and does not retain per-source line attribution, so
-  the Python package reports one combined number.
-- **Module-boundary grouping.** R's `shiny::moduleServer()` hook populates
-  the manifest's `modules` field for the UI report; py-shiny has no
-  equivalent hook, so that field stays empty (cosmetic grouping only).
+- **Per-source counts.** `SHINYCOV_SOURCE` tags the coverage data file
+  (`.coverage.<source>`), the pytest plugin defaults to `pytest`, and
+  `shinycov.source_counts()` / `shinycov . --sources` report one row per
+  source (`expressions` = executable lines, `hits` = covered lines).
+  `hits` counts covered lines rather than execution counts: coverage.py
+  records whether a line ran, not how many times. Per-line per-source
+  *columns* (R's `source_coverage()`) are not ported -- coverage.py merges
+  parallel data at combine-time and does not retain per-source line
+  attribution.
+- **Module-boundary grouping.** py-shiny's module system
+  (`shiny.module.ui`/`shiny.module.server` via `namespace_context()`) is the
+  counterpart to R's `shiny::moduleServer()`; the plugin hooks
+  `namespace_context()` to record real namespace prefixes and populates the
+  manifest's `modules` field plus each element's `module`, the same longest
+  prefix-match attribution R's `apply_module_boundaries()` performs.
 
 ## Why UI coverage needs its own generated file
 
