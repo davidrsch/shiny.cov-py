@@ -299,6 +299,15 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         print(f"shiny.cov: coverage report failed: {e}")
         return
 
+    # Also emit an HTML report with per-line hit counts (coverage.py's
+    # equivalent of covr::report()'s annotated source view), written under
+    # .shiny.cov/htmlcov/ so CI can upload it as an artifact alongside the
+    # terminal/XML report.
+    try:
+        cov.html_report(directory=str(out_dir / "htmlcov"))
+    except coverage.misc.CoverageException as e:
+        print(f"shiny.cov: html report failed: {e}")
+
     if manifest is None:
         # No controller method was ever called on a real page, so UI
         # discovery never ran at all -- distinct from an app that was
