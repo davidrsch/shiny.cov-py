@@ -22,11 +22,20 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import re
 from typing import Any
 
 import coverage
 
 from .plugin import _blend_ui_coverage, _combine_with_retry, finalize, OUTPUT_DIRNAME
+
+# coverage.py's own parallel-file suffix (see coverage.sqldata.SUFFIX_PATTERN):
+# `.HOST.pidPID.XRANDOMx[.HHASHh]`. Replicated here so source_counts() can tell
+# a parallel file (`.coverage.<host>.pid…`) from a source-tagged base file
+# (`.coverage.cypress`) without importing coverage internals.
+_PARALLEL_SUFFIX = re.compile(
+    r"\.([^.]+)\.pid(\d+)\.X(\w+?)x(\.H(\w+?)h)?$"
+)
 
 
 def _read_manifest(out_dir: pathlib.Path) -> dict[str, Any] | None:
@@ -161,6 +170,79 @@ def _cobertura_timestamp() -> str:
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _source_of(name: str) -> str:
+    """Classify a `.coverage*` file basename into its source tag.
+
+    `.coverage` and `.coverage.<host>.pid...` (an untagged parallel file)
+    both map to "total"; `.coverage.cypress[.<suffix>]` maps to "cypress".
+    """
+    if name == ".coverage":
+        return "total"
+    rest = name[len(".coverage") :]
+    if not rest:
+        return "total"
+    match = _PARALLEL_SUFFIX.search(rest)
+    if match and match.start() == 0:
+        return "total"
+    if match:
+        rest = rest[: match.start()]
+    return rest.lstrip(".") or "total"
+
+
+def _source_line_summary(root: pathlib.Path, base_name: str) -> tuple[int, int]:
+    """(executable lines, covered lines) for one source's combined data.
+
+    Combines that source's parallel files with `keep=True` so the summary
+    is read-only and doesn't consume data a later `collect()`/`to_cobertura()`
+    still needs.
+    """
+    base = root / base_name
+    cov = coverage.Coverage(data_file=str(base))
+    try:
+        cov.combine(strict=True, keep=True)
+    except coverage.misc.CoverageException:
+        if not base.exists():
+            return 0, 0
+        cov.load()
+
+    expressions = 0
+    hits = 0
+    for filename in cov.get_data().measured_files():
+        try:
+            _name, executable, _excluded, missing, _branches = cov.analysis2(filename)
+        except coverage.misc.CoverageException:
+            continue
+        expressions += len(executable)
+        hits += len(executable) - len(set(missing))
+    return expressions, hits
+
+
+def source_counts(root: str | pathlib.Path = ".") -> list[dict[str, Any]]:
+    """Per-source coverage summary, mirroring R's `source_counts()`.
+
+    Returns one row per test source that produced coverage (e.g. `pytest`,
+    `cypress`), with `expressions` (executable lines) and `hits` (covered
+    lines). A run with a single untagged source reports only `total`.
+
+    Unlike R's `source_counts()`, `hits` counts covered lines rather than
+    execution counts: coverage.py records whether a line ran, not how many
+    times.
+    """
+    root = pathlib.Path(root)
+    by_source: dict[str, list[pathlib.Path]] = {}
+    for path in root.glob(".coverage*"):
+        if path.name.endswith("-journal"):
+            continue
+        by_source.setdefault(_source_of(path.name), []).append(path)
+
+    rows = []
+    for source in sorted(by_source):
+        base_name = ".coverage" if source == "total" else f".coverage.{source}"
+        expressions, hits = _source_line_summary(root, base_name)
+        rows.append({"source": source, "expressions": expressions, "hits": hits})
+    return rows
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="shinycov",
@@ -178,11 +260,22 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="also write a UI-blended Cobertura XML report to FILE",
     )
+    parser.add_argument(
+        "--sources",
+        action="store_true",
+        help="print the per-source coverage breakdown (source_counts())",
+    )
     args = parser.parse_args(argv)
     percent = collect(args.root)
     if args.cobertura:
         to_cobertura(args.root, args.cobertura)
         print(f"shiny.cov: wrote Cobertura report to {args.cobertura}")
+    if args.sources:
+        for row in source_counts(args.root):
+            print(
+                f"shiny.cov: source {row['source']}: "
+                f"{row['hits']}/{row['expressions']} lines"
+            )
     return 0 if percent is not None else 1
 
 

@@ -31,6 +31,7 @@ invoking `pytest` directly or via `coverage run`.
 """
 from __future__ import annotations
 
+import os
 import pathlib
 import re
 import time
@@ -46,6 +47,38 @@ UI_ELEMENTS_FILENAME = "ui_elements.py"
 _HEADER_LINES = 3
 
 _owns_coverage = False
+
+
+def _resolve_source() -> str:
+    """The coverage source tag for this run (SHINYCOV_SOURCE, default pytest).
+
+    Mirrors the R package, where each adapter sets SHINYCOV_SOURCE so
+    `collect()` can keep per-source counts. The pytest plugin is the
+    "pytest" adapter, so it defaults there; a consumer can override with
+    `SHINYCOV_SOURCE=...` in the environment.
+    """
+    return os.environ.get("SHINYCOV_SOURCE", "pytest")
+
+
+def _tag_coverage_source() -> None:
+    """Point coverage.py's data file at a source-tagged name.
+
+    `COVERAGE_FILE` is the one knob coverage.py reads in both this process
+    and (via environment inheritance) the py-shiny app subprocess, so
+    setting it here keeps the in-process and subprocess data in
+    `.coverage.<source>.*` rather than a bare `.coverage`, letting
+    `source_counts()` attribute each test framework's coverage separately.
+
+    Deliberately skipped when an external `coverage run -m pytest` is
+    already active: its Coverage() was constructed before this hook ran, so
+    overriding COVERAGE_FILE here would send the app subprocess's data to a
+    different file than the one that external Coverage is combining. In that
+    case the caller sets SHINYCOV_SOURCE/COVERAGE_FILE in the shell first.
+    """
+    source = _resolve_source()
+    if not source or coverage.Coverage.current() is not None:
+        return
+    os.environ.setdefault("COVERAGE_FILE", f".coverage.{source}")
 
 
 def _warn_if_xdist_active(config: pytest.Config) -> None:
@@ -74,6 +107,7 @@ def _warn_if_xdist_active(config: pytest.Config) -> None:
 def pytest_configure(config: pytest.Config) -> None:
     controllers.instrument()
     _warn_if_xdist_active(config)
+    _tag_coverage_source()
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:
