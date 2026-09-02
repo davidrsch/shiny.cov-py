@@ -47,14 +47,22 @@ def _flush():
         pass
 
 
+_prev_handlers = {}
+
+
 def _on_signal(signum, frame):
     _flush()
-    signal.signal(signum, signal.SIG_DFL)
-    os.kill(os.getpid(), signum)
+    prev = _prev_handlers.get(signum)
+    if prev is not None and prev not in (signal.SIG_DFL, signal.SIG_IGN):
+        prev(signum, frame)  # chain (e.g. coverage.py's sigterm handler)
+    else:
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
 
 
 for _sig in (signal.SIGTERM, signal.SIGINT):
     try:
+        _prev_handlers[_sig] = signal.getsignal(_sig)
         signal.signal(_sig, _on_signal)
     except (ValueError, OSError):
         pass
