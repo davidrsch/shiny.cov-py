@@ -1,0 +1,4 @@
+[tool.coverage.run]
+patch = ["subprocess"]
+branch = true
+sigterm = true

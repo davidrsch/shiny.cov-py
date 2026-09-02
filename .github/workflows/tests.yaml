@@ -1,0 +1,54 @@
+# Run shiny.cov's own test suite (controllers.py/merge.py/plugin.py logic),
+# and separately a real py-shiny end-to-end run against examples/minimal_app.
+#
+# Lives inside this package's own directory (not a shared monorepo
+# .github/workflows/) so it comes along automatically once this package is
+# split out into its own repo -- no working-directory needed since the
+# package is the repo root here.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+name: shiny.cov-py-package-tests
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install -e ".[dev]"
+
+      - run: pytest
+
+  live:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install -e ".[dev]"
+
+      # examples/minimal_app/test_app.py uses pytest-playwright's `page`
+      # fixture via shiny.pytest.create_app_fixture/shiny.run.ShinyAppProc.
+      # pytest-playwright ships as part of py-shiny's own `test` extra
+      # rather than a direct shiny.cov dependency (shiny.cov itself never
+      # imports it), so it's installed here rather than added to
+      # pyproject.toml's own dependency list.
+      - run: pip install "shiny[test]"
+
+      - run: playwright install --with-deps chromium
+
+      - run: pytest examples/minimal_app

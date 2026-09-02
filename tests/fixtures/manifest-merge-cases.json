@@ -1,0 +1,133 @@
+{
+  "cases": [
+    {
+      "name": "null old snapshot passes new through unchanged",
+      "old": null,
+      "new": {
+        "inputs": [{"id": "greet", "type": "shiny.actionButtonInput", "label": "Greet"}],
+        "outputs": [{"id": "out", "type": "shiny.textOutput", "label": ""}],
+        "tabs": ["Main"],
+        "conditional": [],
+        "modules": []
+      },
+      "expected": {
+        "inputs": [{"id": "greet", "type": "shiny.actionButtonInput", "label": "Greet"}],
+        "outputs": [{"id": "out", "type": "shiny.textOutput", "label": ""}],
+        "tabs": ["Main"],
+        "conditional": [],
+        "modules": []
+      }
+    },
+    {
+      "name": "more specific type in old wins over generic type for same id in new",
+      "old": {
+        "inputs": [{"id": "picker_1", "type": "shinyWidgets.pickerInput", "label": "Picker 1"}],
+        "outputs": [],
+        "tabs": [],
+        "conditional": [],
+        "modules": []
+      },
+      "new": {
+        "inputs": [{"id": "picker_1", "type": "shiny.selectInput", "label": ""}],
+        "outputs": [],
+        "tabs": [],
+        "conditional": [],
+        "modules": []
+      },
+      "expected": {
+        "inputs": [{"id": "picker_1", "type": "shinyWidgets.pickerInput", "label": "Picker 1"}],
+        "outputs": [],
+        "tabs": [],
+        "conditional": [],
+        "modules": []
+      }
+    },
+    {
+      "name": "missing label in old is filled in from new",
+      "old": {
+        "inputs": [{"id": "n", "type": "shiny.numericInput", "label": ""}],
+        "outputs": [],
+        "tabs": [],
+        "conditional": [],
+        "modules": []
+      },
+      "new": {
+        "inputs": [{"id": "n", "type": "shiny.numericInput", "label": "Number of bins"}],
+        "outputs": [],
+        "tabs": [],
+        "conditional": [],
+        "modules": []
+      },
+      "expected": {
+        "inputs": [{"id": "n", "type": "shiny.numericInput", "label": "Number of bins"}],
+        "outputs": [],
+        "tabs": [],
+        "conditional": [],
+        "modules": []
+      }
+    },
+    {
+      "name": "ids unique to old and new both survive; tabs/conditional/modules union and dedupe",
+      "old": {
+        "inputs": [{"id": "only_old", "type": "shiny.textInput", "label": "Only old"}],
+        "outputs": [{"id": "out_old", "type": "shiny.textOutput", "label": ""}],
+        "tabs": ["Main", "Settings"],
+        "conditional": ["panel_a"],
+        "modules": ["mod1"]
+      },
+      "new": {
+        "inputs": [{"id": "only_new", "type": "shiny.textInput", "label": "Only new"}],
+        "outputs": [{"id": "out_new", "type": "shiny.textOutput", "label": ""}],
+        "tabs": ["Settings", "About"],
+        "conditional": ["panel_a", "panel_b"],
+        "modules": ["mod1", "mod2"]
+      },
+      "expected": {
+        "inputs": [
+          {"id": "only_old", "type": "shiny.textInput", "label": "Only old"},
+          {"id": "only_new", "type": "shiny.textInput", "label": "Only new"}
+        ],
+        "outputs": [
+          {"id": "out_old", "type": "shiny.textOutput", "label": ""},
+          {"id": "out_new", "type": "shiny.textOutput", "label": ""}
+        ],
+        "tabs": ["Main", "Settings", "About"],
+        "conditional": ["panel_a", "panel_b"],
+        "modules": ["mod1", "mod2"]
+      }
+    },
+    {
+      "name": "numeric-looking string ids merge correctly regardless of iteration order",
+      "old": {
+        "inputs": [
+          {"id": "2", "type": "shinyWidgets.pickerInput", "label": "Second"},
+          {"id": "10", "type": "shiny.selectInput", "label": ""}
+        ],
+        "outputs": [],
+        "tabs": [],
+        "conditional": [],
+        "modules": []
+      },
+      "new": {
+        "inputs": [
+          {"id": "10", "type": "shiny.selectInput", "label": "Tenth"},
+          {"id": "2", "type": "shiny.selectInput", "label": "Second (generic)"}
+        ],
+        "outputs": [],
+        "tabs": [],
+        "conditional": [],
+        "modules": []
+      },
+      "expected": {
+        "inputs": [
+          {"id": "2", "type": "shinyWidgets.pickerInput", "label": "Second"},
+          {"id": "10", "type": "shiny.selectInput", "label": "Tenth"}
+        ],
+        "outputs": [],
+        "tabs": [],
+        "conditional": [],
+        "modules": []
+      }
+    }
+  ]
+}

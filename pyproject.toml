@@ -1,0 +1,93 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "shiny.cov"
+# 0.0.0.dev0 is the PEP 440-legal form of the "unreleased/dev" sentinel the
+# other sibling packages in this monorepo use (shiny.cov-r's 0.0.0.9000,
+# shiny.cov-cypress/shiny.cov-playwright's 0.0.0-9000) -- neither of those
+# forms is valid under PEP 440, which this field is bound by.
+version = "0.0.0.dev0"
+description = "Real end-to-end coverage (server lines + browser-verified UI elements, blended into one number) for py-shiny apps tested with pytest + Playwright."
+readme = "README.md"
+# merge.py's `Element = dict[str, Any]` is a runtime (not just type-hint)
+# subscript of the builtin `dict`, which requires PEP 585 -- Python 3.9+.
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+  { name = "David Díaz", email = "daviddrsch@gmail.com" },
+]
+maintainers = [
+  { name = "David Díaz", email = "daviddrsch@gmail.com" },
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Framework :: Pytest",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development :: Testing",
+]
+dependencies = [
+  # 7.10.3 is when coverage.py's `[run] patch = ["subprocess"]` full-config
+  # propagation to subprocesses was fixed -- this plugin's blended
+  # coverage depends on that working correctly.
+  "coverage>=7.10.3",
+  # 1.0.0 is when shiny.playwright.controller, shiny.run.ShinyAppProc, and
+  # shiny.pytest.create_app_fixture -- everything this package imports from
+  # py-shiny -- were first introduced (py-shiny CHANGELOG, 2024-07-18
+  # release), so this floor is the actual minimum, not an arbitrary round
+  # number.
+  "shiny>=1.0.0",
+  # 1.48.0 matches py-shiny's own declared floor for its `test`/`add-test`
+  # extras (see py-shiny's pyproject.toml) -- since this plugin instruments
+  # the same shiny.playwright.controller classes those extras are built
+  # around, tracking their floor keeps the two packages on a
+  # known-compatible Playwright version rather than an unverified one.
+  "playwright>=1.48.0",
+  "pytest>=7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "build",
+  "hatchling",
+]
+
+[project.urls]
+Homepage = "https://github.com/daviddrsch/shiny.cov-py"
+Repository = "https://github.com/daviddrsch/shiny.cov-py"
+"Bug Tracker" = "https://github.com/daviddrsch/shiny.cov-py/issues"
+
+[project.entry-points.pytest11]
+shinycov = "shinycov.plugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/shinycov"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+# ---------------------------------------------------------------------------
+# Guidance for CONSUMING projects, not for this package's own build.
+#
+# A project using shiny.cov needs this in its own pyproject.toml (or
+# .coveragerc/setup.cfg/tox.ini) for subprocess coverage and branch
+# coverage to be measured at all:
+#
+# [tool.coverage.run]
+# patch = ["subprocess"]
+# branch = true
+# sigterm = true
+#
+# See README.md for why this can't be set programmatically by the plugin
+# itself, and for what happens automatically vs. what this config is for.
+# ---------------------------------------------------------------------------
