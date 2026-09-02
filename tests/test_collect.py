@@ -11,7 +11,9 @@ from shinycov.collect import (
     _read_manifest,
     _source_of,
     main,
+    render_report_html,
     source_counts,
+    source_coverage,
 )
 
 
@@ -108,3 +110,30 @@ def test_source_counts_reports_each_source(tmp_path: pathlib.Path):
     assert by_source["pytest"]["hits"] == 2
     assert by_source["cypress"]["expressions"] == 2
     assert by_source["cypress"]["hits"] == 2
+
+
+def test_source_coverage_is_per_line_per_source(tmp_path: pathlib.Path):
+    _write_source_data(tmp_path, "pytest", "pytest_app.py")
+    _write_source_data(tmp_path, "cypress", "cypress_app.py")
+
+    data = source_coverage(tmp_path)
+    pytest_file = str(tmp_path / "pytest_app.py")
+    cypress_file = str(tmp_path / "cypress_app.py")
+
+    assert data[pytest_file][1] == {"pytest": 1}
+    assert data[pytest_file][2] == {"pytest": 1}
+    assert data[cypress_file][1] == {"cypress": 1}
+    assert data[cypress_file][2] == {"cypress": 1}
+
+
+def test_render_report_html_has_count_and_source_columns(tmp_path: pathlib.Path):
+    _write_source_data(tmp_path, "pytest", "app.py")
+    out = tmp_path / "coverage-report.html"
+    render_report_html(tmp_path, str(out))
+
+    html = out.read_text(encoding="utf-8")
+    assert "<th>count</th>" in html
+    assert "<th>pytest</th>" in html
+    assert "class='count'>1</td>" in html
+    assert "<td class='src-col'>1</td>" in html
+    assert "app.py</td>" in html

@@ -111,7 +111,7 @@ def test_click_go_button():
 def _fake_cov_that_fails_n_times(n: int) -> MagicMock:
     calls = {"count": 0}
 
-    def combine(strict: bool = False) -> None:
+    def combine(strict: bool = False, keep: bool = False) -> None:
         calls["count"] += 1
         if calls["count"] <= n:
             raise coverage.misc.CoverageException("no data to combine")

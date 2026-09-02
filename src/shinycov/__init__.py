@@ -10,6 +10,19 @@ shiny.cov package.
 # Keep in sync with the `version` field in pyproject.toml.
 __version__ = "0.0.0.dev0"
 
-from .collect import collect, source_counts, to_cobertura  # noqa: E402
+from .collect import (  # noqa: E402
+    collect,
+    render_report_html,
+    source_counts,
+    source_coverage,
+    to_cobertura,
+)
 
-__all__ = ["collect", "source_counts", "to_cobertura", "__version__"]
+__all__ = [
+    "collect",
+    "render_report_html",
+    "source_counts",
+    "source_coverage",
+    "to_cobertura",
+    "__version__",
+]

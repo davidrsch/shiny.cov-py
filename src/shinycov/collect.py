@@ -194,20 +194,10 @@ def _source_of(name: str) -> str:
 
 
 def _source_line_summary(root: pathlib.Path, base_name: str) -> tuple[int, int]:
-    """(executable lines, covered lines) for one source's combined data.
-
-    Combines that source's parallel files with `keep=True` so the summary
-    is read-only and doesn't consume data a later `collect()`/`to_cobertura()`
-    still needs.
-    """
-    base = root / base_name
-    cov = coverage.Coverage(data_file=str(base))
-    try:
-        cov.combine(strict=True, keep=True)
-    except coverage.misc.CoverageException:
-        if not base.exists():
-            return 0, 0
-        cov.load()
+    """(executable lines, covered lines) for one source's combined data."""
+    cov = _load_source(root, base_name)
+    if cov is None:
+        return 0, 0
 
     expressions = 0
     hits = 0
@@ -219,6 +209,157 @@ def _source_line_summary(root: pathlib.Path, base_name: str) -> tuple[int, int]:
         expressions += len(executable)
         hits += len(executable) - len(set(missing))
     return expressions, hits
+
+
+def _load_source(root: pathlib.Path, base_name: str) -> coverage.Coverage | None:
+    """Load one source's combined coverage data, without consuming it."""
+    base = root / base_name
+    cov = coverage.Coverage(data_file=str(base))
+    try:
+        cov.combine(strict=True, keep=True)
+    except coverage.misc.CoverageException:
+        if not base.exists():
+            return None
+        cov.load()
+    return cov
+
+
+def source_coverage(
+    root: str | pathlib.Path = ".",
+) -> dict[str, dict[int, dict[str, int]]]:
+    """Per-file, per-line, per-source hit counts (mirrors R's source_coverage()).
+
+    Returns `{filename: {line: {source: hits}}}` where `hits` is 0 or 1
+    (coverage.py records execution, not counts). The per-line total is the
+    number of sources that covered that line.
+    """
+    root = pathlib.Path(root)
+    sources: dict[str, coverage.Coverage] = {}
+    seen: set[str] = set()
+    for path in sorted(root.glob(".coverage*")):
+        if path.name.endswith("-journal"):
+            continue
+        source = _source_of(path.name)
+        if source in seen:
+            continue
+        base_name = ".coverage" if source == "total" else f".coverage.{source}"
+        cov = _load_source(root, base_name)
+        if cov is not None:
+            seen.add(source)
+            sources[source] = cov
+
+    result: dict[str, dict[int, dict[str, int]]] = {}
+    for source, cov in sources.items():
+        for filename in cov.get_data().measured_files():
+            try:
+                _name, executable, _excluded, missing, _branches = cov.analysis2(filename)
+            except coverage.misc.CoverageException:
+                continue
+            missing = set(missing)
+            for line in executable:
+                result.setdefault(filename, {}).setdefault(line, {})[source] = (
+                    0 if line in missing else 1
+                )
+    return result
+
+
+def render_report_html(
+    root: str | pathlib.Path = ".", filename: str = "coverage-report.html"
+) -> str:
+    """Write a self-contained, annotated HTML report with per-source columns.
+
+    Coverage.py's own HTML report shows coverage via color but not numeric
+    per-line counts or per-source columns; this renders the same shape as the
+    R package's report (a count column plus one column per test source) so the
+    two can be compared side by side.
+    """
+    root = pathlib.Path(root).resolve()
+    cov_data = source_coverage(root)
+    sources = sorted({s for lines in cov_data.values() for line in lines.values() for s in line})
+
+    def _app_file(filename: str) -> bool:
+        try:
+            rel = pathlib.Path(filename).resolve().relative_to(root)
+        except ValueError:
+            return False
+        parts = rel.parts
+        return not any(p == OUTPUT_DIRNAME for p in parts) and not (
+            parts and (parts[-1].startswith("test_") or parts[-1].endswith("_test.py"))
+        )
+
+    files = sorted(f for f in cov_data if _app_file(f))
+
+    def _esc(text: str) -> str:
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    total_lines = 0
+    covered_lines = 0
+    body_parts: list[str] = []
+
+    # File overview table.
+    rows: list[str] = []
+    for f in files:
+        lines = cov_data[f]
+        total = len(lines)
+        covered = sum(1 for line in lines.values() if sum(line.values()) > 0)
+        total_lines += total
+        covered_lines += covered
+        pct = round(100 * covered / total, 1) if total else 100.0
+        rows.append(
+            f"<tr><td>{_esc(f)}</td><td>{total}</td><td>{covered}</td><td>{pct}%</td></tr>"
+        )
+
+    body_parts.append("<h1>shiny.cov coverage &mdash; Python</h1>")
+    overall = round(100 * covered_lines / total_lines, 1) if total_lines else 100.0
+    body_parts.append(f"<p class='sub'>{overall}% &mdash; {covered_lines}/{total_lines} lines; "
+                      f"per-source: {', '.join(sources) or 'none'}</p>")
+    body_parts.append("<table class='files'><tr><th>File</th><th>Lines</th><th>Covered</th><th>%</th></tr>")
+    body_parts.extend(rows)
+    body_parts.append("</table>")
+
+    # Per-file annotated source.
+    for f in files:
+        lines = cov_data[f]
+        try:
+            src = pathlib.Path(f).read_text(encoding="utf-8").splitlines()
+        except OSError:
+            src = []
+        body_parts.append(f"<h2>{_esc(f)}</h2>")
+        header = "<tr><th>#</th><th>count</th>"
+        for s in sources:
+            header += f"<th>{_esc(s)}</th>"
+        header += "<th>source</th></tr>"
+        body_parts.append(f"<table class='src'><thead>{header}</thead><tbody>")
+        for ln, source_hits in sorted(lines.items()):
+            total = sum(source_hits.values())
+            cls = "missed" if total == 0 else "covered"
+            cells = f"<td class='num'>{ln}</td><td class='count'>{total}</td>"
+            for s in sources:
+                cells += f"<td class='src-col'>{source_hits.get(s, '')}</td>"
+            text = src[ln - 1] if 0 < ln <= len(src) else ""
+            body_parts.append(
+                f"<tr class='{cls}'>{cells}<td><pre>{_esc(text)}</pre></td></tr>"
+            )
+        body_parts.append("</tbody></table>")
+
+    html = (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'><title>shiny.cov coverage</title>"
+        "<style>"
+        "body{font-family:monospace;margin:2em;background:#fff;color:#111}"
+        "h1,h2{font-family:sans-serif}.sub{font-family:sans-serif;color:#444}"
+        "table{border-collapse:collapse;margin:1em 0}"
+        "th,td{padding:.2em .7em;border:1px solid #ddd;text-align:right}"
+        "td:last-child,th:last-child{text-align:left}"
+        "pre{margin:0;white-space:pre}"
+        "tr.missed{background:#fcece9}"
+        "tr.covered{background:#fff}"
+        ".num{color:#aaa}"
+        "</style></head><body>"
+        + "\n".join(body_parts)
+        + "</body></html>\n"
+    )
+    pathlib.Path(filename).write_text(html, encoding="utf-8")
+    return filename
 
 
 def source_counts(root: str | pathlib.Path = ".") -> list[dict[str, Any]]:
@@ -274,6 +415,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="install the module-boundary hook into .shiny.cov/ and print the env",
     )
+    parser.add_argument(
+        "--html",
+        metavar="FILE",
+        default=None,
+        help="write an annotated HTML report with per-source line counts to FILE",
+    )
     args = parser.parse_args(argv)
 
     if args.setup:
@@ -289,6 +436,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.cobertura:
         to_cobertura(args.root, args.cobertura)
         print(f"shiny.cov: wrote Cobertura report to {args.cobertura}")
+    if args.html:
+        render_report_html(args.root, args.html)
+        print(f"shiny.cov: wrote annotated HTML report to {args.html}")
     if args.sources:
         for row in source_counts(args.root):
             print(

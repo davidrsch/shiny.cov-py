@@ -79,6 +79,16 @@ def _tag_coverage_source() -> None:
     if not source or coverage.Coverage.current() is not None:
         return
     os.environ.setdefault("COVERAGE_FILE", f".coverage.{source}")
+    # Parallel data files have unique pid/random suffixes and would
+    # otherwise accumulate across runs, so remove any from a previous run
+    # before this one starts writing (matches R's overwrite-by-fixed-name).
+    for stale in pathlib.Path.cwd().glob(f".coverage.{source}*"):
+        if stale.name.endswith("-journal"):
+            continue
+        try:
+            stale.unlink()
+        except OSError:
+            pass
 
 
 def _warn_if_xdist_active(config: pytest.Config) -> None:
@@ -243,9 +253,12 @@ def _combine_with_retry(cov: coverage.Coverage, attempts: int = 5, delay: float 
     found_any = False
     for attempt in range(attempts):
         try:
-            cov.combine(strict=True)
+            # keep=True so the per-source data files survive for source_counts()/
+            # source_coverage()/render_report_html()/to_cobertura() to re-read
+            # after collect() has already reported the blended number.
+            cov.combine(strict=True, keep=True)
             found_any = True
-            break  # Data found -- further attempts would just re-raise on the now-empty file set.
+            break
         except coverage.misc.CoverageException:
             pass  # No parallel `.coverage.*` files yet -- may still show up on a later attempt.
         if attempt < attempts - 1:
