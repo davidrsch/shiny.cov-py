@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import re
 from typing import Any
@@ -263,128 +264,150 @@ def source_coverage(
     return result
 
 
+_SCOR_CSS = (
+    "#source p{display:flex}"
+    "#source p .n{float:none;width:3.5rem;margin-left:0;flex:0 0 3.5rem}"
+    "#source p .scov{float:none;flex:0 0 3em;text-align:right;font-weight:bold}"
+    "#source p .scov-src{float:none;flex:0 0 3em;text-align:right}"
+    "#source p .t{width:auto;flex:1 1 auto;margin-left:0}"
+    ".scov-header{position:sticky;top:0;background:#fff;z-index:10;display:flex;"
+    "border-bottom:1px solid #ccc;padding:.2em 0;font-family:sans-serif;font-size:.85em}"
+    ".scov-header .h-n{flex:0 0 3.5rem}"
+    ".scov-header .h-count{flex:0 0 3em;text-align:right;font-weight:bold}"
+    ".scov-header .h-src{flex:0 0 3em;text-align:right}"
+    ".scov-header .h-t{flex:1 1 auto}"
+    ".scov-toggle{font-family:sans-serif;font-size:.85em;display:block;margin:.4em 0}"
+)
+
+_LINE_ANCHOR_RE = re.compile(
+    r'(<p class="[^"]*">\s*<span class="n"><a id="t(\d+)"[^>]*>\d+</a></span>)'
+)
+
+_INDEX_ROW_RE = re.compile(r'<tr class="region">.*?</tr>', re.DOTALL)
+
+
+def _is_app_file(root: pathlib.Path, rel_path: str) -> bool:
+    try:
+        rel = pathlib.Path(os.path.abspath(rel_path)).resolve().relative_to(root)
+    except ValueError:
+        return False
+    return not any(p == OUTPUT_DIRNAME for p in rel.parts) and not (
+        rel.parts
+        and (rel.parts[-1].startswith("test_") or rel.parts[-1].endswith("_test.py"))
+    )
+
+
+def _decorate_coverage_html(out_dir: pathlib.Path, root: pathlib.Path) -> None:
+    """Inject per-line hit counts, a fixed header, and a source toggle into
+    coverage.py's own HTML report, and hide non-app files from its index."""
+    htmlcov = out_dir / "htmlcov"
+    status_path = htmlcov / "status.json"
+    if not status_path.exists():
+        return
+    try:
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
+
+    line_hits = modules.read_line_hits(out_dir)
+    sources = sorted(line_hits)
+    if not sources:
+        return
+
+    url_to_file: dict[str, str] = {}
+    for entry in status.get("files", {}).values():
+        index = entry.get("index")
+        if index and index.get("url"):
+            url_to_file[index["url"]] = index.get("file", "")
+
+    # Drop non-app files (ui_elements.py, the plugin's own files, tests) from
+    # the index while keeping their contribution to the overall percentage.
+    index_file = htmlcov / "index.html"
+    if index_file.exists():
+        html = index_file.read_text(encoding="utf-8")
+
+        def _row(match: re.Match[str]) -> str:
+            href = re.search(r'href="([^"]+)"', match.group(0))
+            if href and not _is_app_file(root, url_to_file.get(href.group(1), "")):
+                return ""
+            return match.group(0)
+
+        index_file.write_text(_INDEX_ROW_RE.sub(_row, html), encoding="utf-8")
+
+    # Decorate each app file's per-file page.
+    for url, rel_path in url_to_file.items():
+        if not _is_app_file(root, rel_path):
+            continue
+        html_file = htmlcov / url
+        if not html_file.exists():
+            continue
+        abs_path = os.path.abspath(rel_path)
+
+        def _repl(match: re.Match[str]) -> str:
+            lineno = int(match.group(2))
+            spans = []
+            total = 0
+            for source in sources:
+                count = line_hits.get(source, {}).get((abs_path, lineno), 0)
+                total += count
+                spans.append(f'<span class="scov-src src-col">{count}</span>')
+            return match.group(1) + f'<span class="scov">{total}</span>' + "".join(spans)
+
+        html = html_file.read_text(encoding="utf-8")
+        html = _LINE_ANCHOR_RE.sub(_repl, html)
+        header = (
+            '<label class="scov-toggle"><input type="checkbox" id="shinycov-toggle-sources" checked> '
+            "show source columns</label>"
+            '<div class="scov-header"><span class="h-n">#</span><span class="h-count">count</span>'
+            + "".join(f'<span class="h-src src-col">{s}</span>' for s in sources)
+            + '<span class="h-t">source</span></div>'
+        )
+        html = html.replace('<main id="source">', header + '<main id="source">', 1)
+        toggle_js = (
+            "<script>var sc=document.getElementById('shinycov-toggle-sources');"
+            "if(sc){function su(){var v=sc.checked?'':'none';"
+            "document.querySelectorAll('.src-col').forEach(function(e){e.style.display=v});}"
+            "sc.addEventListener('change',su);}</script>"
+        )
+        html = html.replace("</head>", f"<style>{_SCOR_CSS}</style></head>", 1)
+        html = html.replace("</body>", toggle_js + "</body>", 1)
+        html_file.write_text(html, encoding="utf-8")
+
+
 def render_report_html(root: str | pathlib.Path = ".") -> str:
-    """Write a coverage.py-styled report with per-line hit counts + sources.
+    """Emit coverage.py's styled HTML report, decorated with per-line hit counts.
 
-    Combines every source's coverage data, then renders one table per app
-    source file with a sticky header and columns `#`, `count` (total execution
-    counts), one column per test source, and the source text. The generated
-    `.shiny.cov/ui_elements.py` file and test files are not listed. A checkbox
-    toggles the per-source columns off/on; the `count` column always stays.
-
-    Lines are colored by execution (green when hit, red when executable but
-    never hit), driven by the subprocess hook's line-hit counts rather than
-    coverage.py's boolean line data.
+    Combines all `.coverage.*` data, blends the UI manifest/interaction log,
+    writes coverage.py's own HTML report under `.shiny.cov/htmlcov/`, then
+    injects a per-line `count` column plus one column per test source, a fixed
+    header, and a checkbox that hides/shows the per-source columns (the
+    `count` column always stays). Non-app files are hidden from the index.
     """
     root = pathlib.Path(root).resolve()
     out_dir = root / OUTPUT_DIRNAME
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    cov_data = source_coverage(root)
-    line_hits = modules.read_line_hits(out_dir)
-    cov_sources = {s for lines in cov_data.values() for line in lines.values() for s in line}
-    sources = sorted(set(cov_sources) | set(line_hits))
+    cov = coverage.Coverage(data_file=str(root / ".coverage"))
+    _combine_with_retry(cov)
+    manifest = _read_manifest(out_dir)
+    interactions = _read_interactions(out_dir)
+    boundaries = modules.read_boundaries(out_dir)
+    if manifest is not None and boundaries:
+        manifest = modules.attach_boundaries(manifest, boundaries)
+    _blend_ui_coverage(cov, manifest, interactions, out_dir)
 
-    def _app_file(filename: str) -> bool:
-        try:
-            rel = pathlib.Path(filename).resolve().relative_to(root)
-        except ValueError:
-            return False
-        parts = rel.parts
-        return not any(p == OUTPUT_DIRNAME for p in parts) and not (
-            parts and (parts[-1].startswith("test_") or parts[-1].endswith("_test.py"))
-        )
+    # Keep the report focused on the app's own code.
+    cov.config.report_omit = [
+        "*/shinycov/*",
+        "*/site-packages/*",
+        "test_*.py",
+        "*sitecustomize.py",
+    ]
 
-    files = sorted(f for f in cov_data if _app_file(f))
-
-    def _esc(text: str) -> str:
-        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-    total_lines = 0
-    covered_lines = 0
-    body: list[str] = []
-
-    # File overview.
-    rows: list[str] = []
-    for f in files:
-        lines = cov_data[f]
-        total = len(lines)
-        covered = sum(
-            1 for ln in lines
-            if sum(line_hits.get(s, {}).get((f, ln), 0) for s in sources) > 0
-        )
-        total_lines += total
-        covered_lines += covered
-        pct = round(100 * covered / total, 1) if total else 100.0
-        rows.append(f"<tr><td>{_esc(f)}</td><td>{total}</td><td>{covered}</td><td>{pct}%</td></tr>")
-
-    body.append("<h1>shiny.cov coverage &mdash; Python</h1>")
-    overall = round(100 * covered_lines / total_lines, 1) if total_lines else 100.0
-    body.append(
-        f"<p class='sub'>{overall}% &mdash; {covered_lines}/{total_lines} lines; "
-        f"per-source: {', '.join(sources) or 'none'}</p>"
-    )
-    body.append(
-        "<label class='toggle'><input type='checkbox' id='shinycov-toggle-sources' checked> "
-        "show source columns</label>"
-    )
-    body.append(
-        "<table class='files'><tr><th>File</th><th>Lines</th><th>Covered</th><th>%</th></tr>"
-        + "".join(rows) + "</table>"
-    )
-
-    for f in files:
-        lines = cov_data[f]
-        try:
-            src = pathlib.Path(f).read_text(encoding="utf-8").splitlines()
-        except OSError:
-            src = []
-        body.append(f"<h2>{_esc(f)}</h2>")
-        header = "<tr><th>#</th><th>count</th>"
-        for s in sources:
-            header += f"<th class='src-col'>{_esc(s)}</th>"
-        header += "<th>source</th></tr>"
-        body.append(f"<table class='src'><thead>{header}</thead><tbody>")
-        for ln in sorted(lines):
-            counts = {s: line_hits.get(s, {}).get((f, ln), 0) for s in sources}
-            total = sum(counts.values())
-            cls = "covered" if total > 0 else "missed"
-            cells = f"<td class='num'>{ln}</td><td class='count'>{total}</td>"
-            for s in sources:
-                cells += f"<td class='src-col'>{counts[s] if counts[s] else ''}</td>"
-            text = src[ln - 1] if 0 < ln <= len(src) else ""
-            body.append(f"<tr class='{cls}'>{cells}<td><pre>{_esc(text)}</pre></td></tr>")
-        body.append("</tbody></table>")
-
-    html = (
-        "<!DOCTYPE html><html><head><meta charset='utf-8'><title>shiny.cov coverage</title>"
-        "<style>"
-        "body{font-family:SFMono-Regular,Menlo,Consolas,monospace;margin:2em;background:#fff;color:#111}"
-        "h1,h2,.sub,.toggle{font-family:sans-serif}"
-        ".sub{color:#444}"
-        ".toggle{font-size:13px;display:block;margin:.6em 0}"
-        "table{border-collapse:collapse;margin:1em 0}"
-        "th,td{padding:.15em .7em;border:1px solid #ddd;text-align:right}"
-        "td:last-child,th:last-child{text-align:left}"
-        "pre{margin:0;white-space:pre}"
-        "tr.missed{background:#ffeeee}"
-        "tr.covered{background:#fff}"
-        ".num{color:#999}"
-        ".src thead th{position:sticky;top:0;background:#f5f5f5;z-index:2;border-bottom:1px solid #ccc}"
-        ".src-col{min-width:4em}"
-        "</style></head><body>"
-        + "\n".join(body)
-        + "<script>"
-        "var t=document.getElementById('shinycov-toggle-sources');"
-        "if(t){function u(){var v=t.checked?'':'none';"
-        "document.querySelectorAll('.src-col').forEach(function(e){e.style.display=v});}"
-        "t.addEventListener('change',u);}"
-        "</script></body></html>\n"
-    )
-
-    html_file = out_dir / "report.html"
-    html_file.write_text(html, encoding="utf-8")
-    return str(html_file)
+    html_dir = out_dir / "htmlcov"
+    cov.html_report(directory=str(html_dir))
+    _decorate_coverage_html(out_dir, root)
+    return str(html_dir / "index.html")
 
 
 def source_counts(root: str | pathlib.Path = ".") -> list[dict[str, Any]]:

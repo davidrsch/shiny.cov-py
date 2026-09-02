@@ -126,7 +126,7 @@ def test_source_coverage_is_per_line_per_source(tmp_path: pathlib.Path):
     assert data[cypress_file][2] == {"cypress": 1}
 
 
-def test_render_report_html_has_counts_sources_and_toggle(
+def test_render_report_html_decorates_coverage_html(
     tmp_path: pathlib.Path, monkeypatch
 ):
     monkeypatch.chdir(tmp_path)
@@ -140,15 +140,16 @@ def test_render_report_html_has_counts_sources_and_toggle(
     )
 
     index = render_report_html(tmp_path)
-    assert index.endswith("report.html")
-    html = pathlib.Path(index).read_text(encoding="utf-8")
+    assert index.endswith("index.html")
+    htmlcov = tmp_path / ".shiny.cov" / "htmlcov"
+    assert (htmlcov / "app_py.html").exists()
 
-    assert "<th>count</th>" in html
-    assert "<th class='src-col'>pytest</th>" in html
-    assert "shinycov-toggle-sources" in html  # the source-column toggle
-    assert "class='count'>2</td>" in html  # the return line executed twice
-    assert "class='src-col'>2</td>" in html
-    # The generated ui_elements.py file is not listed as a source file.
-    assert "ui_elements.py" not in html
-    # Hit lines are colored covered, not missed.
-    assert "<tr class='covered'>" in html
+    per_file = (htmlcov / "app_py.html").read_text(encoding="utf-8")
+    assert "shinycov-toggle-sources" in per_file  # the source-column toggle
+    assert "scov-header" in per_file  # the fixed column header
+    assert '<span class="scov">2</span>' in per_file  # line 2 executed twice
+    assert '<span class="scov-src src-col">2</span>' in per_file
+
+    index_html = (htmlcov / "index.html").read_text(encoding="utf-8")
+    assert "ui_elements.py" not in index_html  # generated file hidden
+    assert "app.py" in index_html
