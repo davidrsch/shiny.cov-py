@@ -126,7 +126,8 @@ def test_source_coverage_is_per_line_per_source(tmp_path: pathlib.Path):
     assert data[cypress_file][2] == {"cypress": 1}
 
 
-def test_render_report_html_has_count_and_source_columns(tmp_path: pathlib.Path):
+def test_render_report_html_decorates_coverage_html(tmp_path: pathlib.Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     _write_source_data(tmp_path, "pytest", "app.py")
     # Simulate the subprocess hook's line-hit output: two executions of the
     # return line (line 2) and one of the def line (line 1).
@@ -135,12 +136,21 @@ def test_render_report_html_has_count_and_source_columns(tmp_path: pathlib.Path)
     (tmp_path / ".shiny.cov" / "linehits.pytest.json").write_text(
         json.dumps({f"{app}:1": 1, f"{app}:2": 2})
     )
-    out = tmp_path / "coverage-report.html"
-    render_report_html(tmp_path, str(out))
 
-    html = out.read_text(encoding="utf-8")
-    assert "<th>count</th>" in html
-    assert "<th>pytest</th>" in html
-    assert "class='count'>2</td>" in html  # the return line executed twice
-    assert "<td class='src-col'>2</td>" in html
-    assert "app.py</td>" in html
+    index = render_report_html(tmp_path)
+    assert index.endswith("index.html")
+
+    htmlcov = tmp_path / ".shiny.cov" / "htmlcov"
+    assert (htmlcov / "index.html").exists()
+    # Every per-file page (not the index) carries the injected count + source
+    # column; pick any one and check the injected spans.
+    per_file = None
+    for page in htmlcov.glob("*.html"):
+        text = page.read_text(encoding="utf-8")
+        if 'id="source"' in text:  # a per-file source page, not an index
+            per_file = text
+            break
+    assert per_file is not None
+    assert "scov-legend" in per_file and "count" in per_file
+    assert '<span class="scov-src" title="pytest">' in per_file
+    assert '<span class="scov" title="total hits">' in per_file

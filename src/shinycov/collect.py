@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import re
 from typing import Any
@@ -211,6 +212,79 @@ def _source_line_summary(root: pathlib.Path, base_name: str) -> tuple[int, int]:
     return expressions, hits
 
 
+_LINE_ANCHOR_RE = re.compile(
+    r'(<p class="[^"]*">\s*<span class="n"><a id="t(\d+)"[^>]*>\d+</a></span>)'
+)
+
+_SCOR_CSS = (
+    ".scov,.scov-src{display:inline-block;min-width:3em;text-align:right;"
+    "padding:0 .5em;border-right:1px solid #e0e0e0;margin-right:.2em}"
+    ".scov{font-weight:bold}"
+    ".scov-legend{font-family:monospace;padding:.4em 0;color:#333}"
+)
+
+
+def _decorate_coverage_html(out_dir: pathlib.Path) -> None:
+    """Inject per-line hit counts and per-source columns into coverage.py's HTML.
+
+    coverage.py's report colors lines but shows no numeric counts and no
+    per-source breakdown. This reads the line-hit files written by the
+    subprocess hook and injects a `count` column plus one column per source
+    into each per-file page, keeping coverage.py's own styling and layout.
+    """
+    htmlcov = out_dir / "htmlcov"
+    status_path = htmlcov / "status.json"
+    if not status_path.exists():
+        return
+    try:
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
+
+    line_hits = modules.read_line_hits(out_dir)
+    sources = sorted(line_hits)
+    if not sources:
+        return
+
+    for entry in status.get("files", {}).values():
+        index = entry.get("index")
+        if not index:
+            continue
+        url = index.get("url")
+        rel_path = index.get("file")
+        if not url or not rel_path:
+            continue
+        html_file = htmlcov / url
+        if not html_file.exists():
+            continue
+        abs_path = os.path.abspath(rel_path)
+
+        def _repl(match: re.Match[str]) -> str:
+            lineno = int(match.group(2))
+            spans = []
+            total = 0
+            for source in sources:
+                count = line_hits.get(source, {}).get((abs_path, lineno), 0)
+                total += count
+                spans.append(f'<span class="scov-src" title="{source}">{count}</span>')
+            return (
+                match.group(1)
+                + f'<span class="scov" title="total hits">{total}</span>'
+                + "".join(spans)
+            )
+
+        html = html_file.read_text(encoding="utf-8")
+        html = _LINE_ANCHOR_RE.sub(_repl, html)
+        legend = (
+            '<div class="scov-legend">hits: count'
+            + "".join(f" | {s}" for s in sources)
+            + "</div>"
+        )
+        html = html.replace('<main id="source">', legend + '<main id="source">', 1)
+        html = html.replace("</head>", f"<style>{_SCOR_CSS}</style></head>", 1)
+        html_file.write_text(html, encoding="utf-8")
+
+
 def _load_source(root: pathlib.Path, base_name: str) -> coverage.Coverage | None:
     """Load one source's combined coverage data, without consuming it."""
     base = root / base_name
@@ -263,110 +337,35 @@ def source_coverage(
     return result
 
 
-def render_report_html(
-    root: str | pathlib.Path = ".", filename: str = "coverage-report.html"
-) -> str:
-    """Write a self-contained, annotated HTML report with per-source columns.
+def render_report_html(root: str | pathlib.Path = ".") -> str:
+    """Emit coverage.py's HTML report, decorated with per-line hit counts.
 
-    Coverage.py's own HTML report shows coverage via color but not numeric
-    per-line counts or per-source columns; this renders the same shape as the
-    R package's report (a count column plus one column per test source) so the
-    two can be compared side by side.
+    Combines all `.coverage.*` data, blends the UI manifest/interaction log,
+    and writes coverage.py's own styled HTML report under
+    `.shiny.cov/htmlcov/`. Then injects a per-line `count` column (execution
+    counts) plus one column per test source, so the report keeps coverage.py's
+    look and layout while carrying the same information R's report shows.
     """
     root = pathlib.Path(root).resolve()
-    cov_data = source_coverage(root)
-    line_hits = modules.read_line_hits(root / OUTPUT_DIRNAME)
-    cov_sources = {s for lines in cov_data.values() for line in lines.values() for s in line}
-    sources = sorted(set(cov_sources) | set(line_hits))
+    out_dir = root / OUTPUT_DIRNAME
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    def _app_file(filename: str) -> bool:
-        try:
-            rel = pathlib.Path(filename).resolve().relative_to(root)
-        except ValueError:
-            return False
-        parts = rel.parts
-        return not any(p == OUTPUT_DIRNAME for p in parts) and not (
-            parts and (parts[-1].startswith("test_") or parts[-1].endswith("_test.py"))
-        )
+    # Use a `.coverage` base name so combine() merges every source's data
+    # files (.coverage.pytest, .coverage.cypress, and their parallel files),
+    # independent of any COVERAGE_FILE the plugin set in the environment.
+    cov = coverage.Coverage(data_file=str(root / ".coverage"))
+    _combine_with_retry(cov)
+    manifest = _read_manifest(out_dir)
+    interactions = _read_interactions(out_dir)
+    boundaries = modules.read_boundaries(out_dir)
+    if manifest is not None and boundaries:
+        manifest = modules.attach_boundaries(manifest, boundaries)
+    _blend_ui_coverage(cov, manifest, interactions, out_dir)
 
-    files = sorted(f for f in cov_data if _app_file(f))
-
-    def _esc(text: str) -> str:
-        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-    total_lines = 0
-    covered_lines = 0
-    body_parts: list[str] = []
-
-    # File overview table.
-    rows: list[str] = []
-    for f in files:
-        lines = cov_data[f]
-        total = len(lines)
-        covered = sum(1 for line in lines.values() if sum(line.values()) > 0)
-        total_lines += total
-        covered_lines += covered
-        pct = round(100 * covered / total, 1) if total else 100.0
-        rows.append(
-            f"<tr><td>{_esc(f)}</td><td>{total}</td><td>{covered}</td><td>{pct}%</td></tr>"
-        )
-
-    body_parts.append("<h1>shiny.cov coverage &mdash; Python</h1>")
-    overall = round(100 * covered_lines / total_lines, 1) if total_lines else 100.0
-    body_parts.append(f"<p class='sub'>{overall}% &mdash; {covered_lines}/{total_lines} lines; "
-                      f"per-source: {', '.join(sources) or 'none'}</p>")
-    body_parts.append("<table class='files'><tr><th>File</th><th>Lines</th><th>Covered</th><th>%</th></tr>")
-    body_parts.extend(rows)
-    body_parts.append("</table>")
-
-    # Per-file annotated source.
-    for f in files:
-        lines = cov_data[f]
-        try:
-            src = pathlib.Path(f).read_text(encoding="utf-8").splitlines()
-        except OSError:
-            src = []
-        body_parts.append(f"<h2>{_esc(f)}</h2>")
-        header = "<tr><th>#</th><th>count</th>"
-        for s in sources:
-            header += f"<th>{_esc(s)}</th>"
-        header += "<th>source</th></tr>"
-        body_parts.append(f"<table class='src'><thead>{header}</thead><tbody>")
-        for ln in sorted(lines):
-            # Execution counts from the subprocess hook, falling back to 0
-            # for a line that never executed (coverage.py's boolean data only
-            # tells us a line is executable, not how many times it ran).
-            counts = {s: line_hits.get(s, {}).get((f, ln), 0) for s in sources}
-            total = sum(counts.values())
-            cls = "missed" if total == 0 else "covered"
-            cells = f"<td class='num'>{ln}</td><td class='count'>{total}</td>"
-            for s in sources:
-                c = counts[s]
-                cells += f"<td class='src-col'>{c if c else ''}</td>"
-            text = src[ln - 1] if 0 < ln <= len(src) else ""
-            body_parts.append(
-                f"<tr class='{cls}'>{cells}<td><pre>{_esc(text)}</pre></td></tr>"
-            )
-        body_parts.append("</tbody></table>")
-
-    html = (
-        "<!DOCTYPE html><html><head><meta charset='utf-8'><title>shiny.cov coverage</title>"
-        "<style>"
-        "body{font-family:monospace;margin:2em;background:#fff;color:#111}"
-        "h1,h2{font-family:sans-serif}.sub{font-family:sans-serif;color:#444}"
-        "table{border-collapse:collapse;margin:1em 0}"
-        "th,td{padding:.2em .7em;border:1px solid #ddd;text-align:right}"
-        "td:last-child,th:last-child{text-align:left}"
-        "pre{margin:0;white-space:pre}"
-        "tr.missed{background:#fcece9}"
-        "tr.covered{background:#fff}"
-        ".num{color:#aaa}"
-        "</style></head><body>"
-        + "\n".join(body_parts)
-        + "</body></html>\n"
-    )
-    pathlib.Path(filename).write_text(html, encoding="utf-8")
-    return filename
+    html_dir = out_dir / "htmlcov"
+    cov.html_report(directory=str(html_dir))
+    _decorate_coverage_html(out_dir)
+    return str(html_dir / "index.html")
 
 
 def source_counts(root: str | pathlib.Path = ".") -> list[dict[str, Any]]:
@@ -424,9 +423,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--html",
-        metavar="FILE",
-        default=None,
-        help="write an annotated HTML report with per-source line counts to FILE",
+        action="store_true",
+        help="write coverage.py's HTML report decorated with per-source line counts",
     )
     args = parser.parse_args(argv)
 
@@ -444,8 +442,8 @@ def main(argv: list[str] | None = None) -> int:
         to_cobertura(args.root, args.cobertura)
         print(f"shiny.cov: wrote Cobertura report to {args.cobertura}")
     if args.html:
-        render_report_html(args.root, args.html)
-        print(f"shiny.cov: wrote annotated HTML report to {args.html}")
+        index = render_report_html(args.root)
+        print(f"shiny.cov: wrote annotated HTML report to {index}")
     if args.sources:
         for row in source_counts(args.root):
             print(
