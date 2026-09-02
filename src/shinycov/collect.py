@@ -27,6 +27,7 @@ from typing import Any
 
 import coverage
 
+from . import modules
 from .plugin import _blend_ui_coverage, _combine_with_retry, finalize, OUTPUT_DIRNAME
 
 # coverage.py's own parallel-file suffix (see coverage.sqldata.SUFFIX_PATTERN):
@@ -103,6 +104,9 @@ def to_cobertura(
     _combine_with_retry(cov)
     manifest = _read_manifest(out_dir)
     interactions = _read_interactions(out_dir)
+    boundaries = modules.read_boundaries(out_dir)
+    if manifest is not None and boundaries:
+        manifest = modules.attach_boundaries(manifest, boundaries)
     _blend_ui_coverage(cov, manifest, interactions, out_dir)
     return _write_cobertura_xml(cov, filename)
 
@@ -265,7 +269,22 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="print the per-source coverage breakdown (source_counts())",
     )
+    parser.add_argument(
+        "--setup",
+        action="store_true",
+        help="install the module-boundary hook into .shiny.cov/ and print the env",
+    )
     args = parser.parse_args(argv)
+
+    if args.setup:
+        out_dir = pathlib.Path(args.root) / OUTPUT_DIRNAME
+        modules.install(out_dir)
+        print(
+            f'export PYTHONPATH="{out_dir}:$PYTHONPATH" '
+            f'SHINYCOV_OUTPUT_DIR="{out_dir}" SHINYCOV_SOURCE=cypress'
+        )
+        return 0
+
     percent = collect(args.root)
     if args.cobertura:
         to_cobertura(args.root, args.cobertura)

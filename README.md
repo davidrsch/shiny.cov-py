@@ -115,19 +115,29 @@ browser-side UI discovery is identical (py-shiny ships the same
 `Shiny.inputBindings`/`Shiny.outputBindings` registry as R Shiny), so the
 `shiny.cov-cypress` adapter's `plugin.js`/`support.js` work unchanged.
 
-1. Launch the app under coverage measurement (so the app process is measured
+1. Install the module-boundary hook and export the env it needs (the
+   `shinycov --setup` command writes a `sitecustomize.py` into `.shiny.cov/`
+   and prints the `export` line to copy):
+
+   ```bash
+   shinycov --setup
+   # export PYTHONPATH=".shiny.cov:$PYTHONPATH" SHINYCOV_OUTPUT_DIR=".shiny.cov" SHINYCOV_SOURCE=cypress
+   eval "$(shinycov --setup)"
+   ```
+
+2. Launch the app under coverage measurement (so the app process is measured
    and, with `patch = ["subprocess"]`, any subprocess it spawns too):
 
    ```bash
    coverage run -m shiny run app.py --port 3333 --host 127.0.0.1 &
    ```
 
-2. Configure Cypress the same way as for R Shiny: add
+3. Configure Cypress the same way as for R Shiny: add
    `shiny.cov-cypress/plugin` to `setupNodeEvents`, load
    `shiny.cov-cypress/support`, set `env.shinyCovAppDir` to the app dir, and
    log interactions with `cy.shinyCovInteract()`.
 
-3. Run Cypress, then collect and report with the standalone `shinycov` command
+4. Run Cypress, then collect and report with the standalone `shinycov` command
    (it combines the `.coverage.*` data with `.shiny.cov/manifest.json` +
    `.shiny.cov/interactions.json` and emits the same blended report the pytest
    plugin produces):

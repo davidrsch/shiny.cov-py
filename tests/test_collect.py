@@ -1,6 +1,7 @@
 """Tests for the standalone collector (Cypress-driven runs, no pytest)."""
 
 import json
+import os
 import pathlib
 
 import coverage
@@ -9,6 +10,7 @@ from shinycov.collect import (
     _read_interactions,
     _read_manifest,
     _source_of,
+    main,
     source_counts,
 )
 
@@ -72,6 +74,25 @@ def _write_source_data(tmp_path: pathlib.Path, source: str, filename: str):
     ns["f"]()
     cov.stop()
     cov.save()
+
+
+def test_setup_flag_installs_module_hook(tmp_path, monkeypatch, capsys):
+    old_path = os.environ.get("PYTHONPATH")
+    old_out = os.environ.get("SHINYCOV_OUTPUT_DIR")
+    try:
+        monkeypatch.chdir(tmp_path)
+        assert main([".", "--setup"]) == 0
+        assert (tmp_path / ".shiny.cov" / "sitecustomize.py").exists()
+        assert "export PYTHONPATH" in capsys.readouterr().out
+    finally:
+        if old_path is None:
+            os.environ.pop("PYTHONPATH", None)
+        else:
+            os.environ["PYTHONPATH"] = old_path
+        if old_out is None:
+            os.environ.pop("SHINYCOV_OUTPUT_DIR", None)
+        else:
+            os.environ["SHINYCOV_OUTPUT_DIR"] = old_out
 
 
 def test_source_counts_reports_each_source(tmp_path: pathlib.Path):
