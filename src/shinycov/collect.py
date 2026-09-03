@@ -272,8 +272,9 @@ _SCOR_CSS = (
     "#source p .scov{float:none;flex:0 0 3rem;text-align:right;font-weight:bold}"
     "#source p .scov-src{float:none;flex:0 0 4rem;text-align:right}"
     "#source p .t{width:auto;flex:1 1 auto;margin-left:0}"
-    ".scov-header{position:sticky;top:0;z-index:10;display:flex;gap:.5em;"
-    "background:#f8f8f8;color:#000;border-bottom:1px solid #ccc;padding:.3em 0;"
+    ".scov-bar{position:sticky;top:0;left:0;right:0;z-index:10;"
+    "background:#f8f8f8;color:#000;border-bottom:1px solid #ccc;padding:.3em 0}"
+    ".scov-header{display:flex;gap:.5em;"
     "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:.85em}"
     ".scov-header .h-n{flex:0 0 3.5rem;text-align:right}"
     ".scov-header .h-count{flex:0 0 3rem;text-align:right;font-weight:bold}"
@@ -281,7 +282,7 @@ _SCOR_CSS = (
     ".scov-header .h-t{flex:1 1 auto}"
     ".scov-toggle{font-family:sans-serif;font-size:.85em;display:block;margin:.4em 0;color:#666}"
     "@media (prefers-color-scheme: dark){"
-    ".scov-header{background:#000;color:#eee;border-color:#333}"
+    ".scov-bar{background:#000;color:#eee;border-color:#333}"
     ".scov-toggle{color:#aaa}"
     "}"
 )
@@ -363,11 +364,13 @@ def _decorate_coverage_html(out_dir: pathlib.Path, root: pathlib.Path) -> None:
         html = html_file.read_text(encoding="utf-8")
         html = _LINE_ANCHOR_RE.sub(_repl, html)
         header = (
+            '<div class="scov-bar">'
             '<label class="scov-toggle"><input type="checkbox" id="shinycov-toggle-sources" checked> '
-            "show source columns</label>"
+            "show test source columns</label>"
             '<div class="scov-header"><span class="h-n">#</span><span class="h-count">count</span>'
             + "".join(f'<span class="h-src src-col">{s}</span>' for s in sources)
             + '<span class="h-t">source</span></div>'
+            "</div>"
         )
         html = html.replace('<main id="source">', header + '<main id="source">', 1)
         toggle_js = (
