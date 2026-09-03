@@ -266,6 +266,7 @@ def source_coverage(
 
 
 _SCOR_CSS = (
+    "main{z-index:0}"
     "#source{padding:1em 0}"
     "#source p{display:flex;gap:.5em}"
     "#source p .n{float:none;width:3.5rem;margin-left:0;padding-right:0;flex:0 0 3.5rem}"
