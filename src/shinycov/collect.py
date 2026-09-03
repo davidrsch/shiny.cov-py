@@ -266,6 +266,7 @@ def source_coverage(
 
 
 _SCOR_CSS = (
+    "#source{padding:1em 0}"
     "#source p{display:flex}"
     "#source p .n{float:none;width:3.5rem;margin-left:0;flex:0 0 3.5rem}"
     "#source p .scov{float:none;flex:0 0 3rem;text-align:right;font-weight:bold}"
