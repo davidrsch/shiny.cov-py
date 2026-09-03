@@ -24,6 +24,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 from typing import Any
 
 import coverage
@@ -267,16 +268,21 @@ def source_coverage(
 _SCOR_CSS = (
     "#source p{display:flex}"
     "#source p .n{float:none;width:3.5rem;margin-left:0;flex:0 0 3.5rem}"
-    "#source p .scov{float:none;flex:0 0 3em;text-align:right;font-weight:bold}"
-    "#source p .scov-src{float:none;flex:0 0 3em;text-align:right}"
+    "#source p .scov{float:none;flex:0 0 3rem;text-align:right;font-weight:bold}"
+    "#source p .scov-src{float:none;flex:0 0 3rem;text-align:right}"
     "#source p .t{width:auto;flex:1 1 auto;margin-left:0}"
-    ".scov-header{position:sticky;top:0;background:#fff;z-index:10;display:flex;"
-    "border-bottom:1px solid #ccc;padding:.2em 0;font-family:sans-serif;font-size:.85em}"
-    ".scov-header .h-n{flex:0 0 3.5rem}"
-    ".scov-header .h-count{flex:0 0 3em;text-align:right;font-weight:bold}"
-    ".scov-header .h-src{flex:0 0 3em;text-align:right}"
+    ".scov-header{position:sticky;top:0;z-index:10;display:flex;"
+    "background:#f8f8f8;color:#000;border-bottom:1px solid #ccc;padding:.3em 0;"
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:.85em}"
+    ".scov-header .h-n{flex:0 0 3.5rem;padding-right:1em;box-sizing:border-box;text-align:right}"
+    ".scov-header .h-count{flex:0 0 3rem;text-align:right;font-weight:bold}"
+    ".scov-header .h-src{flex:0 0 3rem;text-align:right}"
     ".scov-header .h-t{flex:1 1 auto}"
-    ".scov-toggle{font-family:sans-serif;font-size:.85em;display:block;margin:.4em 0}"
+    ".scov-toggle{font-family:sans-serif;font-size:.85em;display:block;margin:.4em 0;color:#666}"
+    "@media (prefers-color-scheme: dark){"
+    ".scov-header{background:#000;color:#eee;border-color:#333}"
+    ".scov-toggle{color:#aaa}"
+    "}"
 )
 
 _LINE_ANCHOR_RE = re.compile(
@@ -405,6 +411,9 @@ def render_report_html(root: str | pathlib.Path = ".") -> str:
     ]
 
     html_dir = out_dir / "htmlcov"
+    # Remove a previous report first so stale per-file pages (e.g. files a
+    # previous run measured but this run omitted) don't linger.
+    shutil.rmtree(html_dir, ignore_errors=True)
     cov.html_report(directory=str(html_dir))
     _decorate_coverage_html(out_dir, root)
     return str(html_dir / "index.html")
