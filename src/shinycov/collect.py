@@ -273,6 +273,8 @@ _SCOR_CSS = (
     "#source p .scov-src{float:none;flex:0 0 4rem;text-align:right}"
     "#source p .t{width:auto;flex:1 1 auto;margin-left:0}"
     ".sticky-top{position:sticky;top:0;z-index:10}"
+    "header p.text{display:none}"
+    "#help_panel_wrapper{display:none}"
     ".scov-bar{background:#f8f8f8;color:#000;border-bottom:1px solid #ccc;padding:.3em 0}"
     ".scov-header{display:flex;gap:.5em;"
     "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:.85em}"
