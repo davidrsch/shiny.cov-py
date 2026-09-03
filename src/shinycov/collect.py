@@ -272,10 +272,8 @@ _SCOR_CSS = (
     "#source p .scov{float:none;flex:0 0 3rem;text-align:right;font-weight:bold}"
     "#source p .scov-src{float:none;flex:0 0 4rem;text-align:right}"
     "#source p .t{width:auto;flex:1 1 auto;margin-left:0}"
-    ".sticky-top{position:sticky;top:0;z-index:10}"
-    "header p.text{display:none}"
-    "#help_panel_wrapper{display:none}"
-    ".scov-bar{background:#f8f8f8;color:#000;border-bottom:1px solid #ccc;padding:.3em 0}"
+    "header{position:sticky;top:0;z-index:10}"
+    ".scov-bar{position:sticky;top:0;z-index:9;background:#f8f8f8;color:#000;border-bottom:1px solid #ccc;padding:.3em 0}"
     ".scov-header{display:flex;gap:.5em;"
     "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:.85em}"
     ".scov-header .h-n{flex:0 0 3.5rem;text-align:right}"
@@ -374,8 +372,13 @@ def _decorate_coverage_html(out_dir: pathlib.Path, root: pathlib.Path) -> None:
             + '<span class="h-t">source</span></div>'
             "</div>"
         )
-        html = html.replace('<header>', '<div class="sticky-top"><header>', 1)
-        html = html.replace('<main id="source">', header + '</div><main id="source">', 1)
+        html = html.replace('<main id="source">', header + '<main id="source">', 1)
+        align_js = (
+            "<script>(function(){var h=document.querySelector('header');"
+            "var b=document.querySelector('.scov-bar');"
+            "function a(){if(h&&b){b.style.top=h.offsetHeight+'px';}}"
+            "a();window.addEventListener('resize',a);})();</script>"
+        )
         toggle_js = (
             "<script>var sc=document.getElementById('shinycov-toggle-sources');"
             "if(sc){function su(){var v=sc.checked?'':'none';"
@@ -383,7 +386,7 @@ def _decorate_coverage_html(out_dir: pathlib.Path, root: pathlib.Path) -> None:
             "sc.addEventListener('change',su);}</script>"
         )
         html = html.replace("</head>", f"<style>{_SCOR_CSS}</style></head>", 1)
-        html = html.replace("</body>", toggle_js + "</body>", 1)
+        html = html.replace("</body>", align_js + toggle_js + "</body>", 1)
         html_file.write_text(html, encoding="utf-8")
 
 
